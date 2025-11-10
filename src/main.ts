@@ -64,7 +64,7 @@ export default class FullCalendarPlugin extends Plugin {
             const oauthConfig = this.settings.googleOAuth || {
                 clientId: "",
                 clientSecret: "",
-                redirectUri: "obsidian://google-calendar-callback",
+                redirectUri: "urn:ietf:wg:oauth:2.0:oob",
             };
 
             const calendar = new GoogleCalendar(

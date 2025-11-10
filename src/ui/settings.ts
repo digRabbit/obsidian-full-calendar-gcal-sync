@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS: FullCalendarSettings = {
     googleOAuth: {
         clientId: "",
         clientSecret: "",
-        redirectUri: "obsidian://google-calendar-callback",
+        redirectUri: "urn:ietf:wg:oauth:2.0:oob",
     },
     googleSyncStates: {},
 };
@@ -278,8 +278,7 @@ export class FullCalendarSettingTab extends PluginSettingTab {
                             this.plugin.settings.googleOAuth = {
                                 clientId: "",
                                 clientSecret: "",
-                                redirectUri:
-                                    "obsidian://google-calendar-callback",
+                                redirectUri: "urn:ietf:wg:oauth:2.0:oob",
                             };
                         }
                         this.plugin.settings.googleOAuth.clientId = value;
@@ -301,7 +300,7 @@ export class FullCalendarSettingTab extends PluginSettingTab {
                         this.plugin.settings.googleOAuth = {
                             clientId: "",
                             clientSecret: "",
-                            redirectUri: "obsidian://google-calendar-callback",
+                            redirectUri: "urn:ietf:wg:oauth:2.0:oob",
                         };
                     }
                     this.plugin.settings.googleOAuth.clientSecret = value;
@@ -315,18 +314,17 @@ export class FullCalendarSettingTab extends PluginSettingTab {
                 "OAuth redirect URI (should match Google Cloud Console configuration)"
             )
             .addText((text) => {
-                text.setPlaceholder("obsidian://google-calendar-callback")
+                text.setPlaceholder("urn:ietf:wg:oauth:2.0:oob")
                     .setValue(
                         this.plugin.settings.googleOAuth?.redirectUri ||
-                            "obsidian://google-calendar-callback"
+                            "urn:ietf:wg:oauth:2.0:oob"
                     )
                     .onChange(async (value) => {
                         if (!this.plugin.settings.googleOAuth) {
                             this.plugin.settings.googleOAuth = {
                                 clientId: "",
                                 clientSecret: "",
-                                redirectUri:
-                                    "obsidian://google-calendar-callback",
+                                redirectUri: "urn:ietf:wg:oauth:2.0:oob",
                             };
                         }
                         this.plugin.settings.googleOAuth.redirectUri = value;
