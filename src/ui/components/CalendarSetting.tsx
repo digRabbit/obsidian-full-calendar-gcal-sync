@@ -1,9 +1,83 @@
-import { Notice } from "obsidian";
+import { App, Notice, Modal, Setting, TextComponent } from "obsidian";
 import * as React from "react";
 import { SetStateAction, useState } from "react";
 
 import { CalendarInfo } from "../../types";
 import FullCalendarPlugin from "../../main";
+
+/**
+ * Modal for entering Google OAuth authorization code
+ */
+class AuthCodeModal extends Modal {
+    onSubmit: (code: string) => void;
+    onCancel: () => void;
+
+    constructor(
+        app: App,
+        onSubmit: (code: string) => void,
+        onCancel: () => void
+    ) {
+        super(app);
+        this.onSubmit = onSubmit;
+        this.onCancel = onCancel;
+    }
+
+    onOpen() {
+        const { contentEl } = this;
+        contentEl.empty();
+
+        contentEl.createEl("h2", { text: "Enter Authorization Code" });
+
+        const instructions = contentEl.createDiv();
+        instructions.innerHTML = `
+            <p><strong>After completing authentication in the browser:</strong></p>
+            <ol>
+                <li>Google will redirect to <code>http://localhost</code> (you'll see "This site can't be reached" - that's normal)</li>
+                <li>Look at the URL in your browser's address bar</li>
+                <li>Copy the ENTIRE <code>code</code> value (the part after <code>code=</code>)</li>
+                <li>Example: If URL is <code>http://localhost/?code=4/0Ab32j92...</code>, copy <code>4/0Ab32j92...</code></li>
+            </ol>
+        `;
+
+        let codeInput: TextComponent;
+        new Setting(contentEl)
+            .setName("Authorization Code")
+            .setDesc("Paste the code from the browser URL here")
+            .addText((text) => {
+                codeInput = text;
+                text.setPlaceholder("4/0Ab32j92...");
+                text.inputEl.style.width = "100%";
+                text.inputEl.focus();
+            });
+
+        new Setting(contentEl).addButton((button) => {
+            button
+                .setButtonText("Authenticate")
+                .setCta()
+                .onClick(() => {
+                    const code = codeInput.getValue().trim();
+                    if (code) {
+                        this.onSubmit(code);
+                        this.close();
+                    } else {
+                        new Notice("Please enter the authorization code");
+                    }
+                });
+        });
+
+        new Setting(contentEl).addButton((button) => {
+            button.setButtonText("Cancel").onClick(() => {
+                this.onCancel();
+                this.close();
+            });
+        });
+    }
+
+    onClose() {
+        const { contentEl } = this;
+        contentEl.empty();
+    }
+}
 
 type SourceWith<T extends Partial<CalendarInfo>, K> = T extends K ? T : never;
 
@@ -167,6 +241,81 @@ function SyncStatusSetting<T extends Partial<CalendarInfo>>({
     );
 }
 
+interface ManualSyncButtonProps {
+    source: Partial<CalendarInfo>;
+    plugin?: FullCalendarPlugin;
+}
+
+function ManualSyncButton({ source, plugin }: ManualSyncButtonProps) {
+    const [isSyncing, setIsSyncing] = React.useState(false);
+
+    const handleSync = async () => {
+        if (!plugin || source.type !== "google" || !source.directory) {
+            return;
+        }
+
+        const isAuthenticated = !!(source.accessToken || source.refreshToken);
+        if (!isAuthenticated) {
+            new Notice("Please authenticate with Google Calendar first.");
+            return;
+        }
+
+        setIsSyncing(true);
+        try {
+            // Get the calendar instance from the cache
+            const calendar = plugin.cache.getCalendarById(source.directory);
+            if (!calendar) {
+                new Notice("Calendar not found. Please reload Obsidian.");
+                return;
+            }
+
+            // Import GoogleCalendar to check type
+            const GoogleCalendar = (
+                await import("../../calendars/GoogleCalendar")
+            ).default;
+
+            if (calendar instanceof GoogleCalendar) {
+                await calendar.syncAllEvents();
+                // Sync state is saved automatically by the scheduler after sync
+                new Notice("Sync completed successfully!");
+            } else {
+                new Notice("Calendar is not a Google Calendar.");
+            }
+        } catch (error: any) {
+            console.error("Manual sync failed:", error);
+            new Notice(`Sync failed: ${error?.message || "Unknown error"}`);
+        } finally {
+            setIsSyncing(false);
+        }
+    };
+
+    const isAuthenticated =
+        source.type === "google" &&
+        !!(source.accessToken || source.refreshToken);
+
+    if (!isAuthenticated) {
+        return null;
+    }
+
+    return (
+        <div className="setting-item-control">
+            <button
+                type="button"
+                onClick={handleSync}
+                disabled={isSyncing}
+                style={{
+                    marginLeft: 4,
+                    marginRight: 4,
+                    padding: "4px 8px",
+                    opacity: isSyncing ? 0.6 : 1,
+                }}
+            >
+                {isSyncing ? "Syncing..." : "Sync Now"}
+            </button>
+        </div>
+    );
+}
+
 interface CalendarSettingsProps {
     setting: Partial<CalendarInfo>;
     onColorChange: (s: string) => void;
@@ -207,6 +356,7 @@ export const CalendarSettingRow = ({
             )}
             {isGoogle && <CalendarIdSetting source={setting} />}
             {isGoogle && <SyncStatusSetting source={setting} />}
+            {isGoogle && <ManualSyncButton source={setting} plugin={plugin} />}
             {isCalDAV && <NameSetting source={setting} />}
             {isCalDAV && <Username source={setting} />}
             {isGoogle && !isAuthenticated && onAuthenticate && (
@@ -316,6 +466,7 @@ export class CalendarSettings extends React.Component<
                                 ).ObsidianIO;
 
                                 // Create a temporary calendar instance for authentication
+                                // This instance will be reused for both getting the auth URL and exchanging the code
                                 const tempCalendar = new GoogleCalendar(
                                     new ObsidianIO(this.props.plugin.app),
                                     s.color,
@@ -328,47 +479,88 @@ export class CalendarSettings extends React.Component<
                                     s.tokenExpiry
                                 );
 
-                                const authUrl = tempCalendar.getAuthUrl();
+                                // Store the calendar instance so we can reuse it
+                                const calendarInstance = tempCalendar;
+                                const authUrl = calendarInstance.getAuthUrl();
+
                                 // Open in browser
                                 window.open(authUrl, "_blank");
+
+                                // Show instructions
                                 new Notice(
-                                    "Please complete authentication in the browser, then paste the authorization code here."
+                                    "Complete authentication in the browser, then return here to paste the code."
                                 );
 
-                                // Prompt for authorization code
-                                const code = prompt(
-                                    "After authorizing, copy the 'code' parameter from the redirect URL and paste it here:"
-                                );
-                                if (code) {
-                                    const tokens =
-                                        await tempCalendar.authenticateWithCode(
-                                            code
-                                        );
+                                // Show modal for entering authorization code
+                                const modal = new AuthCodeModal(
+                                    this.props.plugin.app,
+                                    async (code: string) => {
+                                        try {
+                                            // Use the same calendar instance to exchange the code
+                                            // This ensures the OAuth2Client has the same redirect URI
+                                            const tokens =
+                                                await calendarInstance.authenticateWithCode(
+                                                    code
+                                                );
 
-                                    // Update the calendar source with tokens
-                                    const updatedSources = [
-                                        ...this.state.sources.slice(0, idx),
-                                        {
-                                            ...this.state.sources[idx],
-                                            accessToken: tokens.accessToken,
-                                            refreshToken: tokens.refreshToken,
-                                            tokenExpiry: tokens.tokenExpiry,
-                                        },
-                                        ...this.state.sources.slice(idx + 1),
-                                    ];
-                                    this.setState({
-                                        sources: updatedSources,
-                                        dirty: true,
-                                    });
-                                    this.props.submit(updatedSources);
-                                    new Notice(
-                                        "Successfully authenticated with Google Calendar!"
-                                    );
-                                }
+                                            // Update the calendar source with tokens
+                                            const updatedSources = [
+                                                ...this.state.sources.slice(
+                                                    0,
+                                                    idx
+                                                ),
+                                                {
+                                                    ...this.state.sources[idx],
+                                                    accessToken:
+                                                        tokens.accessToken,
+                                                    refreshToken:
+                                                        tokens.refreshToken,
+                                                    tokenExpiry:
+                                                        tokens.tokenExpiry,
+                                                },
+                                                ...this.state.sources.slice(
+                                                    idx + 1
+                                                ),
+                                            ];
+                                            this.setState({
+                                                sources: updatedSources,
+                                                dirty: true,
+                                            });
+                                            this.props.submit(updatedSources);
+                                            new Notice(
+                                                "Successfully authenticated with Google Calendar!"
+                                            );
+                                        } catch (error) {
+                                            console.error(
+                                                "Authentication error:",
+                                                error
+                                            );
+                                            const errorMessage =
+                                                error instanceof Error
+                                                    ? error.message
+                                                    : String(error);
+                                            new Notice(
+                                                `Authentication failed: ${errorMessage}`,
+                                                10000
+                                            ); // Show for 10 seconds
+                                            console.error(
+                                                "Full error details:",
+                                                error
+                                            );
+                                        }
+                                    },
+                                    () => {
+                                        new Notice("Authentication cancelled.");
+                                    }
+                                );
+                                modal.open();
                             } catch (error) {
-                                console.error("Authentication error:", error);
+                                console.error(
+                                    "Error setting up authentication:",
+                                    error
+                                );
                                 new Notice(
-                                    `Authentication failed: ${
+                                    `Failed to start authentication: ${
                                         error instanceof Error
                                             ? error.message
                                             : "Unknown error"

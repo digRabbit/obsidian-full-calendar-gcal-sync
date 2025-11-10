@@ -53,7 +53,7 @@ export const DEFAULT_SETTINGS: FullCalendarSettings = {
     googleOAuth: {
         clientId: "",
         clientSecret: "",
-        redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+        redirectUri: "http://localhost",
     },
     googleSyncStates: {},
 };
@@ -278,7 +278,7 @@ export class FullCalendarSettingTab extends PluginSettingTab {
                             this.plugin.settings.googleOAuth = {
                                 clientId: "",
                                 clientSecret: "",
-                                redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+                                redirectUri: "http://localhost",
                             };
                         }
                         this.plugin.settings.googleOAuth.clientId = value;
@@ -300,7 +300,7 @@ export class FullCalendarSettingTab extends PluginSettingTab {
                         this.plugin.settings.googleOAuth = {
                             clientId: "",
                             clientSecret: "",
-                            redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+                            redirectUri: "http://localhost",
                         };
                     }
                     this.plugin.settings.googleOAuth.clientSecret = value;
@@ -314,17 +314,17 @@ export class FullCalendarSettingTab extends PluginSettingTab {
                 "OAuth redirect URI (should match Google Cloud Console configuration)"
             )
             .addText((text) => {
-                text.setPlaceholder("urn:ietf:wg:oauth:2.0:oob")
+                text.setPlaceholder("http://localhost")
                     .setValue(
                         this.plugin.settings.googleOAuth?.redirectUri ||
-                            "urn:ietf:wg:oauth:2.0:oob"
+                            "http://localhost"
                     )
                     .onChange(async (value) => {
                         if (!this.plugin.settings.googleOAuth) {
                             this.plugin.settings.googleOAuth = {
                                 clientId: "",
                                 clientSecret: "",
-                                redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+                                redirectUri: "http://localhost",
                             };
                         }
                         this.plugin.settings.googleOAuth.redirectUri = value;

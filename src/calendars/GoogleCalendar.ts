@@ -1,4 +1,4 @@
-import { TFile } from "obsidian";
+import { TFile, TFolder } from "obsidian";
 import { EventPathLocation } from "../core/EventStore";
 import { ObsidianInterface } from "../ObsidianAdapter";
 import { EventLocation, OFCEvent } from "../types";
@@ -50,6 +50,18 @@ export default class GoogleCalendar extends EditableCalendar {
                 accessToken,
                 refreshToken,
                 tokenExpiry
+            );
+            console.log(
+                "GoogleCalendar initialized with sync service for directory:",
+                directory
+            );
+        } else {
+            console.log(
+                "GoogleCalendar initialized without sync service (syncEnabled:",
+                syncEnabled,
+                "hasTokens:",
+                !!(accessToken && refreshToken),
+                ")"
             );
         }
     }
@@ -145,7 +157,18 @@ export default class GoogleCalendar extends EditableCalendar {
      * Load sync state
      */
     loadSyncState(state: SyncState): void {
-        this.syncService?.loadSyncState(state);
+        if (this.syncService) {
+            console.log(
+                "Loading sync state into GoogleCalendar for directory:",
+                this.directory
+            );
+            this.syncService.loadSyncState(state);
+        } else {
+            console.warn(
+                "Cannot load sync state: sync service not initialized for directory:",
+                this.directory
+            );
+        }
     }
 
     /**
@@ -162,6 +185,50 @@ export default class GoogleCalendar extends EditableCalendar {
     // EditableCalendar implementation
 
     async getEvents(): Promise<EditableEventResponse[]> {
+        // Ensure directory exists before getting events
+        const directory = this.directory;
+        let folder = this.localCalendar.app.getAbstractFileByPath(directory);
+
+        if (!folder || !(folder instanceof TFolder)) {
+            // Directory doesn't exist, create it
+            try {
+                await this.localCalendar.app.createFolder(directory);
+            } catch (error: any) {
+                // Ignore "folder already exists" errors (race condition)
+                // If the error is something else, we'll let it propagate
+                if (
+                    error?.message &&
+                    !error.message.includes("already exists")
+                ) {
+                    throw error;
+                }
+            }
+
+            // Wait for Obsidian to update its cache, then verify
+            // Retry multiple times with increasing delays in case of timing issues
+            for (let i = 0; i < 10; i++) {
+                folder =
+                    this.localCalendar.app.getAbstractFileByPath(directory);
+                if (folder && folder instanceof TFolder) {
+                    break;
+                }
+                // Wait with exponential backoff: 50ms, 100ms, 150ms, etc.
+                await new Promise((resolve) =>
+                    setTimeout(resolve, 50 + i * 50)
+                );
+            }
+
+            // Final check - if folder still doesn't exist, return empty array
+            // This prevents the error from propagating and allows sync to continue
+            folder = this.localCalendar.app.getAbstractFileByPath(directory);
+            if (!folder || !(folder instanceof TFolder)) {
+                console.warn(
+                    `Directory ${directory} still not available after creation, returning empty events`
+                );
+                return [];
+            }
+        }
+
         return this.localCalendar.getEvents();
     }
 
@@ -173,18 +240,12 @@ export default class GoogleCalendar extends EditableCalendar {
         // Create locally first
         const location = await this.localCalendar.createEvent(event);
 
-        // Then sync to Google Calendar if enabled
-        if (this.isSyncReady()) {
-            try {
-                await this.syncService!.syncEvent(event);
-            } catch (error) {
-                console.error(
-                    "Failed to sync new event to Google Calendar:",
-                    error
-                );
-                // Don't throw - local event was created successfully
-            }
-        }
+        // Don't sync immediately - let the periodic sync handle it
+        // This prevents duplicate events because:
+        // 1. The event might not have an ID yet when created
+        // 2. The periodic sync will pick it up once it has an ID and proper mapping
+        // If immediate sync is needed, it should happen after the event has an ID
+        // and the file system has been updated
 
         return location;
     }
@@ -248,8 +309,12 @@ export default class GoogleCalendar extends EditableCalendar {
         }
 
         const events = await this.getEvents();
-        const ofcEvents = events.map(([event]) => event);
-        await this.syncService!.syncEvents(ofcEvents);
+        // Pass events with their file paths for stable identification
+        const eventsWithPaths = events.map(([event, location]) => ({
+            event,
+            filePath: location?.file?.path,
+        }));
+        await this.syncService!.syncEventsWithPaths(eventsWithPaths);
     }
 
     /**

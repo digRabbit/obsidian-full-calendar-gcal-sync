@@ -64,7 +64,7 @@ export default class FullCalendarPlugin extends Plugin {
             const oauthConfig = this.settings.googleOAuth || {
                 clientId: "",
                 clientSecret: "",
-                redirectUri: "urn:ietf:wg:oauth:2.0:oob",
+                redirectUri: "http://localhost",
             };
 
             const calendar = new GoogleCalendar(
@@ -124,7 +124,7 @@ export default class FullCalendarPlugin extends Plugin {
         );
         if (googleCalendars.length > 0) {
             const syncInterval = googleCalendars[0].syncIntervalMinutes ?? 5;
-            this.syncScheduler = new SyncScheduler(syncInterval);
+            this.syncScheduler = new SyncScheduler(syncInterval, this);
         }
 
         this.cache.reset(this.settings.calendarSources);
@@ -306,7 +306,7 @@ export default class FullCalendarPlugin extends Plugin {
         if (googleCalendarsEnabled.length > 0) {
             const syncInterval =
                 googleCalendarsEnabled[0].syncIntervalMinutes ?? 5;
-            this.syncScheduler = new SyncScheduler(syncInterval);
+            this.syncScheduler = new SyncScheduler(syncInterval, this);
             this.syncScheduler.start();
         }
     }

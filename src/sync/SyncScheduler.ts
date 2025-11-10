@@ -1,5 +1,6 @@
 import { Notice } from "obsidian";
 import GoogleCalendar from "../calendars/GoogleCalendar";
+import type FullCalendarPlugin from "../main";
 
 /**
  * Manages automatic periodic syncing of Google Calendar
@@ -9,9 +10,11 @@ export class SyncScheduler {
     private intervalMinutes: number;
     private googleCalendars: GoogleCalendar[] = [];
     private isRunning: boolean = false;
+    private plugin: FullCalendarPlugin | null = null;
 
-    constructor(intervalMinutes: number = 5) {
+    constructor(intervalMinutes: number = 5, plugin?: FullCalendarPlugin) {
         this.intervalMinutes = intervalMinutes;
+        this.plugin = plugin || null;
     }
 
     /**
@@ -129,6 +132,57 @@ export class SyncScheduler {
                 `Google Calendar sync: Successfully synced ${succeeded} calendar(s)`
             );
         }
+
+        // Save sync state after syncing
+        if (this.plugin) {
+            await this.saveSyncState();
+        }
+    }
+
+    /**
+     * Save sync state to plugin settings without resetting cache
+     */
+    private async saveSyncState(): Promise<void> {
+        if (!this.plugin) return;
+
+        // Save sync states from Google calendars
+        for (const cal of this.googleCalendars) {
+            const syncState = cal.getSyncState();
+            if (syncState) {
+                if (!this.plugin.settings.googleSyncStates) {
+                    this.plugin.settings.googleSyncStates = {};
+                }
+                // Deep copy to ensure proper serialization
+                const mappingCount = Object.keys(
+                    syncState.eventMapping || {}
+                ).length;
+                console.log(`Saving sync state for ${cal.directory}:`, {
+                    lastSyncTime: syncState.lastSyncTime,
+                    mappingCount: mappingCount,
+                });
+                this.plugin.settings.googleSyncStates[cal.directory] = {
+                    lastSyncTime: syncState.lastSyncTime,
+                    eventMapping: { ...syncState.eventMapping }, // Deep copy
+                };
+            }
+
+            // Update credentials if they were refreshed
+            const calInfo = this.plugin.settings.calendarSources.find(
+                (info: any) =>
+                    info.type === "google" && info.directory === cal.directory
+            );
+            if (calInfo && calInfo.type === "google") {
+                const creds = cal.getCredentials();
+                if (creds.accessToken) calInfo.accessToken = creds.accessToken;
+                if (creds.refreshToken)
+                    calInfo.refreshToken = creds.refreshToken;
+                if (creds.tokenExpiry) calInfo.tokenExpiry = creds.tokenExpiry;
+            }
+        }
+
+        // Save settings without resetting cache
+        await this.plugin.saveData(this.plugin.settings);
+        console.log("Sync state saved to disk");
     }
 
     /**

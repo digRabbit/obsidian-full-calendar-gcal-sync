@@ -70,19 +70,13 @@ The Google Calendar sync feature allows you to:
 5. Click "Create"
 6. **Important**: Save the "Client ID" and "Client Secret" - you'll need these!
 
-### 1.5 Configure Redirect URI (Optional for Desktop Apps)
+### 1.5 Redirect URI Configuration
 
-**Good News**: For desktop apps, you don't need to register redirect URIs! The plugin uses the **out-of-band (OOB) flow** which is specifically designed for desktop applications.
+**Good News**: For "Desktop app" OAuth clients, Google automatically handles the redirect URI - you don't need to register it manually!
 
-The default redirect URI is: `urn:ietf:wg:oauth:2.0:oob`
+The plugin uses `http://localhost` as the redirect URI, which is the standard for desktop applications. Google's OAuth system will automatically accept this for desktop app clients.
 
-**Note**: If you don't see "Authorized redirect URIs" in your OAuth client settings, that's fine! Google's new UI for desktop apps doesn't always show this field because the OOB flow doesn't require it to be registered.
-
-**If you want to use a custom redirect URI** (like `obsidian://google-calendar-callback`):
-1. After creating the OAuth client, click on it to view details
-2. Look for "Authorized redirect URIs" (if available in your console version)
-3. If the field exists, add your custom URI there
-4. If the field doesn't exist, that's okay - the OOB flow will work without it
+**Note**: When Google redirects to `http://localhost` after authentication, you'll see a "This site can't be reached" error in your browser - this is normal and expected! The authorization code will be in the URL. Just copy the `code` parameter from the URL and paste it into Obsidian.
 
 ## Step 2: Configure Obsidian Full Calendar
 
@@ -92,7 +86,7 @@ The default redirect URI is: `urn:ietf:wg:oauth:2.0:oob`
 2. Go to "Full Calendar" plugin settings
 3. Find the "Google Calendar OAuth" section
 4. Enter your **Client ID** and **Client Secret** from Step 1.4
-5. The **Redirect URI** should be pre-filled as: `urn:ietf:wg:oauth:2.0:oob` (this is the out-of-band flow for desktop apps - no registration needed!)
+5. The **Redirect URI** should be pre-filled as: `http://localhost` (make sure this is registered in Google Cloud Console - see Step 1.5)
 
 ### 2.2 Add Google Calendar as a Calendar Source
 
@@ -142,13 +136,13 @@ Check the console (Ctrl+Shift+I / Cmd+Option+I) for sync logs:
 
 This error means Google is blocking the OAuth request. Common causes:
 
-1. **Redirect URI issues:**
-   - The plugin uses `urn:ietf:wg:oauth:2.0:oob` (out-of-band flow) by default
-   - This doesn't need to be registered in Google Cloud Console - it's a special URI for desktop apps
-   - Make sure the Redirect URI in Obsidian settings matches: `urn:ietf:wg:oauth:2.0:oob`
-   - If you're using a custom URI like `obsidian://google-calendar-callback`, you may need to register it, but the OOB flow is recommended
+1. **"Missing required parameter: redirect_uri" error:**
+   - Make sure you selected "Desktop app" as the application type when creating the OAuth client
+   - The plugin uses `http://localhost` as the redirect URI (this is automatic for desktop apps)
+   - Verify the Redirect URI in Obsidian settings is set to: `http://localhost`
+   - If the error persists, try rebuilding the plugin and copying the new `main.js` to your vault
    
-   **Note**: Google's new console UI for desktop apps may not show "Authorized redirect URIs" - this is normal and the OOB flow will still work!
+   **Note**: For desktop apps, Google doesn't require you to manually register redirect URIs - it's handled automatically. If you see a redirect URI field, it's likely for a different client type (like "Web application").
 
 2. **Not added as a test user:**
    - Go to OAuth consent screen → Test users
