@@ -1,4 +1,4 @@
-import { google } from "googleapis";
+import { google, calendar_v3 } from "googleapis";
 import { OAuth2Client } from "google-auth-library";
 import { Notice } from "obsidian";
 import { OFCEvent } from "src/types";
@@ -31,7 +31,7 @@ export interface SyncState {
  */
 export class GoogleCalendarSync {
     private oauth2Client: OAuth2Client;
-    private calendar: any;
+    private calendar: calendar_v3.Calendar;
     private syncState: SyncState;
     // Track events currently being synced to prevent duplicates
     private syncingEvents: Map<string, Promise<string | null>> = new Map();
@@ -270,8 +270,8 @@ export class GoogleCalendarSync {
         }
 
         if (event.type !== "single") {
-            console.log("Skipping non-single event:", event.title);
-            return null; // Only sync single events for now
+            // Only sync single events for now
+            return null;
         }
 
         try {
@@ -295,7 +295,7 @@ export class GoogleCalendarSync {
                     calendarId: this.calendarId,
                     requestBody: googleEvent,
                 });
-                return response.data.id;
+                return response.data.id || null;
             }
 
             // If we have both filePath and event.id, check if event.id is already mapped
@@ -308,9 +308,6 @@ export class GoogleCalendarSync {
                     !this.syncState.eventMapping[filePath]
                 ) {
                     // Migrate mapping from event.id to filePath for consistency
-                    console.log(
-                        `Migrating mapping from event.id (${event.id}) to filePath (${filePath})`
-                    );
                     this.syncState.eventMapping[filePath] =
                         existingMappingByEventId;
                     // Keep event.id mapping as well for backward compatibility, but prefer filePath
@@ -320,9 +317,6 @@ export class GoogleCalendarSync {
             // Check if this event is already being synced by another parallel operation
             const existingSync = this.syncingEvents.get(eventKey);
             if (existingSync) {
-                console.log(
-                    `Event ${eventKey} is already being synced, waiting for existing sync to complete`
-                );
                 const result = await existingSync;
                 // Double-check mapping after waiting (in case it was added during sync)
                 if (this.syncState.eventMapping[eventKey]) {
@@ -369,31 +363,17 @@ export class GoogleCalendarSync {
         googleEvent: any,
         eventKey: string
     ): Promise<string | null> {
-        console.log("Syncing event:", {
-            title: event.title,
-            eventKey: eventKey,
-            hasMapping: !!this.syncState.eventMapping[eventKey],
-            mappingCount: Object.keys(this.syncState.eventMapping).length,
-            allMappings: Object.keys(this.syncState.eventMapping),
-        });
-
         const existingGoogleId = this.syncState.eventMapping[eventKey];
 
         if (existingGoogleId) {
-            console.log(
-                "Found existing mapping, updating event:",
-                existingGoogleId
-            );
             // Update existing event
             const response = await this.calendar.events.update({
                 calendarId: this.calendarId,
                 eventId: existingGoogleId,
                 requestBody: googleEvent,
             });
-            console.log("Updated event in Google Calendar:", response.data.id);
-            return response.data.id;
+            return response.data.id || null;
         } else {
-            console.log("No existing mapping, creating new event");
             // Before creating, check if an event with the same title and date already exists in Google Calendar
             // This helps prevent duplicates if the mapping was lost
             try {
@@ -415,10 +395,6 @@ export class GoogleCalendarSync {
                 }
 
                 if (timeMin) {
-                    console.log(
-                        "Querying Google Calendar for existing events:",
-                        { timeMin, timeMax, title: event.title }
-                    );
                     const listResponse = await this.calendar.events.list({
                         calendarId: this.calendarId,
                         timeMin: timeMin,
@@ -434,15 +410,8 @@ export class GoogleCalendarSync {
                     );
 
                     if (existingEvent && existingEvent.id) {
-                        console.log(
-                            "Found existing event in Google Calendar with same title/date, updating:",
-                            existingEvent.id
-                        );
                         // Double-check mapping wasn't added by another parallel sync
                         if (this.syncState.eventMapping[eventKey]) {
-                            console.log(
-                                "Mapping was added during query, using existing mapping"
-                            );
                             return this.syncState.eventMapping[eventKey];
                         }
                         // Update the existing event and track the mapping
@@ -451,13 +420,11 @@ export class GoogleCalendarSync {
                             eventId: existingEvent.id,
                             requestBody: googleEvent,
                         });
-                        this.syncState.eventMapping[eventKey] =
-                            response.data.id;
-                        console.log(
-                            "Updated mapping for existing event. Total mappings:",
-                            Object.keys(this.syncState.eventMapping).length
-                        );
-                        return response.data.id;
+                        const googleId = response.data.id || null;
+                        if (googleId) {
+                            this.syncState.eventMapping[eventKey] = googleId;
+                        }
+                        return googleId;
                     }
                 }
             } catch (error: any) {
@@ -471,10 +438,6 @@ export class GoogleCalendarSync {
             // Double-check mapping wasn't added by another parallel sync before creating
             const doubleCheckMapping = this.syncState.eventMapping[eventKey];
             if (doubleCheckMapping) {
-                console.log(
-                    "Mapping was added during duplicate check, using existing mapping:",
-                    doubleCheckMapping
-                );
                 return doubleCheckMapping;
             }
 
@@ -511,10 +474,6 @@ export class GoogleCalendarSync {
                     );
 
                     if (existingEvent && existingEvent.id) {
-                        console.log(
-                            "Found existing event in final check before creation, using it:",
-                            existingEvent.id
-                        );
                         // Update mapping and return existing event ID
                         this.syncState.eventMapping[eventKey] =
                             existingEvent.id;
@@ -534,30 +493,27 @@ export class GoogleCalendarSync {
                 calendarId: this.calendarId,
                 requestBody: googleEvent,
             });
-            console.log(
-                "Created event in Google Calendar:",
-                response.data.id,
-                "Mapping key:",
-                eventKey
-            );
 
             // Double-check again before adding mapping (race condition protection)
             // Also check if another instance created an event with the same title/date
+            const createdEventId = response.data.id;
             if (this.syncState.eventMapping[eventKey]) {
                 // Another parallel sync already created this event, delete the duplicate we just created
-                console.warn(
-                    `Duplicate event detected for ${eventKey}, deleting duplicate: ${response.data.id}`
-                );
-                try {
-                    await this.calendar.events.delete({
-                        calendarId: this.calendarId,
-                        eventId: response.data.id,
-                    });
-                } catch (deleteError) {
+                if (createdEventId) {
                     console.warn(
-                        "Failed to delete duplicate event:",
-                        deleteError
+                        `Duplicate event detected for ${eventKey}, deleting duplicate: ${createdEventId}`
                     );
+                    try {
+                        await this.calendar.events.delete({
+                            calendarId: this.calendarId,
+                            eventId: createdEventId,
+                        });
+                    } catch (deleteError) {
+                        console.warn(
+                            "Failed to delete duplicate event:",
+                            deleteError
+                        );
+                    }
                 }
                 return this.syncState.eventMapping[eventKey];
             }
@@ -595,20 +551,20 @@ export class GoogleCalendarSync {
                             (item: any) => item.summary === event.title
                         ) || [];
 
-                    if (matchingEvents.length > 1) {
+                    if (matchingEvents.length > 1 && createdEventId) {
                         // Multiple events with same title/date found - we created a duplicate
                         // Keep the first one (oldest), delete ours
                         const otherEvent = matchingEvents.find(
-                            (item: any) => item.id !== response.data.id
+                            (item: any) => item.id !== createdEventId
                         );
-                        if (otherEvent) {
+                        if (otherEvent && otherEvent.id) {
                             console.warn(
-                                `Multiple events with same title/date found, deleting duplicate: ${response.data.id}`
+                                `Multiple events with same title/date found, deleting duplicate: ${createdEventId}`
                             );
                             try {
                                 await this.calendar.events.delete({
                                     calendarId: this.calendarId,
-                                    eventId: response.data.id,
+                                    eventId: createdEventId,
                                 });
                                 // Use the other event's ID
                                 this.syncState.eventMapping[eventKey] =
@@ -632,12 +588,11 @@ export class GoogleCalendarSync {
             }
 
             // Track the mapping using the stable identifier
-            this.syncState.eventMapping[eventKey] = response.data.id;
-            console.log(
-                "Updated mapping. Total mappings:",
-                Object.keys(this.syncState.eventMapping).length
-            );
-            return response.data.id;
+            const finalEventId = createdEventId || null;
+            if (finalEventId) {
+                this.syncState.eventMapping[eventKey] = finalEventId;
+            }
+            return finalEventId;
         }
     }
 
@@ -853,7 +808,6 @@ export class GoogleCalendarSync {
 
         this.syncState.lastSyncTime = Date.now();
 
-        console.log("Sync complete:", results);
         new Notice(
             `Google Calendar sync: ${results.synced} synced, ${results.skipped} skipped, ${results.failed} failed`
         );
@@ -877,10 +831,6 @@ export class GoogleCalendarSync {
         ) {
             return results;
         }
-
-        console.log(
-            `Processing ${this.syncState.pendingDeletions.length} pending deletions...`
-        );
 
         // Process deletions in batches with delays to avoid rate limits
         const BATCH_SIZE = 5; // Reduced from 10 to avoid rate limits
@@ -936,12 +886,6 @@ export class GoogleCalendarSync {
         // Update pending deletions list (keep only failed ones)
         this.syncState.pendingDeletions = remainingDeletions;
 
-        if (results.deleted > 0) {
-            console.log(
-                `Processed ${results.deleted} pending deletions, ${results.failed} failed`
-            );
-        }
-
         return results;
     }
 
@@ -954,7 +898,6 @@ export class GoogleCalendarSync {
         }
         if (!this.syncState.pendingDeletions.includes(eventKey)) {
             this.syncState.pendingDeletions.push(eventKey);
-            console.log(`Added to pending deletions: ${eventKey}`);
         }
     }
 
@@ -981,10 +924,6 @@ export class GoogleCalendarSync {
         if (eventsToDelete.length === 0) {
             return 0;
         }
-
-        console.log(
-            `Found ${eventsToDelete.length} orphaned events to delete from Google Calendar`
-        );
 
         // Delete in batches with delays to avoid rate limits
         const BATCH_SIZE = 5; // Reduced from 10
@@ -1022,9 +961,6 @@ export class GoogleCalendarSync {
                     deletedCount++;
                     // Remove from mapping on success
                     delete this.syncState.eventMapping[obsidianKey];
-                    console.log(
-                        `Deleted orphaned event from Google Calendar: ${obsidianKey}`
-                    );
                 } else {
                     const error = result.reason as any;
                     // Handle 410 (Gone) errors gracefully - event already deleted
@@ -1035,9 +971,6 @@ export class GoogleCalendarSync {
                         deletedCount++;
                         // Remove from mapping since event is already gone
                         delete this.syncState.eventMapping[obsidianKey];
-                        console.log(
-                            `Orphaned event already deleted (410): ${obsidianKey}`
-                        );
                     } else {
                         console.warn("Failed to delete orphaned event:", error);
                         // If deletion fails for other reasons, keep it in mapping for retry
@@ -1112,15 +1045,6 @@ export class GoogleCalendarSync {
                     const existingKey = titleDateMap.get(titleDateKey);
                     if (existingKey && eventMap.has(existingKey)) {
                         // Event with same title/date already exists, skip this one
-                        const dateStr =
-                            event.type === "single"
-                                ? event.date
-                                : event.type === "rrule"
-                                ? event.startDate || "unknown"
-                                : "unknown";
-                        console.log(
-                            `Skipping duplicate event by title/date: ${event.title} on ${dateStr}`
-                        );
                         continue;
                     }
                 }
@@ -1153,15 +1077,6 @@ export class GoogleCalendarSync {
                     eventMap.has(existingKey)
                 ) {
                     // Event with same title/date already exists with different key, skip this one
-                    const dateStr =
-                        event.type === "single"
-                            ? event.date
-                            : event.type === "rrule"
-                            ? event.startDate || "unknown"
-                            : "unknown";
-                    console.log(
-                        `Skipping duplicate event by title/date: ${event.title} on ${dateStr} (existing key: ${existingKey}, new key: ${eventKey})`
-                    );
                     continue;
                 }
                 titleDateMap.set(titleDateKey, eventKey);
@@ -1187,10 +1102,6 @@ export class GoogleCalendarSync {
                 obsidianEventKeys.add(event.id);
             }
         }
-
-        console.log(
-            `Deduplicated ${eventsWithPaths.length} events to ${deduplicatedEvents.length} unique events`
-        );
 
         for (let i = 0; i < deduplicatedEvents.length; i += BATCH_SIZE) {
             const batch = deduplicatedEvents.slice(i, i + BATCH_SIZE);
@@ -1236,8 +1147,6 @@ export class GoogleCalendarSync {
 
         this.syncState.lastSyncTime = Date.now();
 
-        console.log("Sync complete:", results);
-
         // Only show notice if explicitly requested (for periodic sync)
         if (showNotice) {
             const noticeParts = [
@@ -1265,11 +1174,6 @@ export class GoogleCalendarSync {
      */
     loadSyncState(state: SyncState): void {
         const mapping = state.eventMapping || {};
-        console.log("Loading sync state:", {
-            lastSyncTime: state.lastSyncTime,
-            mappingCount: Object.keys(mapping).length,
-            mappingKeys: Object.keys(mapping).slice(0, 10), // Show first 10 keys
-        });
         // Deep copy to avoid reference issues
         this.syncState = {
             lastSyncTime: state.lastSyncTime || 0,
@@ -1278,10 +1182,6 @@ export class GoogleCalendarSync {
                 ? [...state.pendingDeletions]
                 : [],
         };
-        console.log(
-            "Sync state loaded. Current mapping count:",
-            Object.keys(this.syncState.eventMapping).length
-        );
     }
 
     /**

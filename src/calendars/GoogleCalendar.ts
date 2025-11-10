@@ -51,18 +51,6 @@ export default class GoogleCalendar extends EditableCalendar {
                 refreshToken,
                 tokenExpiry
             );
-            console.log(
-                "GoogleCalendar initialized with sync service for directory:",
-                directory
-            );
-        } else {
-            console.log(
-                "GoogleCalendar initialized without sync service (syncEnabled:",
-                syncEnabled,
-                "hasTokens:",
-                !!(accessToken && refreshToken),
-                ")"
-            );
         }
     }
 
@@ -158,10 +146,6 @@ export default class GoogleCalendar extends EditableCalendar {
      */
     loadSyncState(state: SyncState): void {
         if (this.syncService) {
-            console.log(
-                "Loading sync state into GoogleCalendar for directory:",
-                this.directory
-            );
             this.syncService.loadSyncState(state);
         } else {
             console.warn(
@@ -356,7 +340,6 @@ export default class GoogleCalendar extends EditableCalendar {
         if (this.isSyncReady()) {
             try {
                 const filePath = location.path;
-                console.log("Attempting to delete event at path:", filePath);
 
                 // Try to get the event from the file to check if it has an ID
                 // But the file might already be deleted, so we need to try multiple keys

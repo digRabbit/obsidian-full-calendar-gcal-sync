@@ -53,13 +53,9 @@ export class SyncScheduler {
      */
     start(): void {
         if (this.isRunning) {
-            console.log("Sync scheduler is already running");
             return;
         }
 
-        console.log(
-            `Starting Google Calendar auto-sync (every ${this.intervalMinutes} minutes)`
-        );
         this.isRunning = true;
 
         // Run initial sync
@@ -83,7 +79,6 @@ export class SyncScheduler {
             this.intervalId = null;
         }
         this.isRunning = false;
-        console.log("Stopped Google Calendar auto-sync");
     }
 
     /**
@@ -117,11 +112,8 @@ export class SyncScheduler {
         );
 
         if (calendarsToSync.length === 0) {
-            console.log("No Google Calendars ready for sync");
             return;
         }
-
-        console.log(`Syncing ${calendarsToSync.length} Google Calendar(s)...`);
 
         const results = await Promise.allSettled(
             calendarsToSync.map((calendar) => calendar.syncAllEvents())
@@ -149,10 +141,6 @@ export class SyncScheduler {
             new Notice(
                 `Google Calendar sync: ${failed} calendar(s) failed to sync`
             );
-        } else {
-            console.log(
-                `Google Calendar sync: Successfully synced ${succeeded} calendar(s)`
-            );
         }
 
         // Save sync state after syncing
@@ -175,13 +163,6 @@ export class SyncScheduler {
                     this.plugin.settings.googleSyncStates = {};
                 }
                 // Deep copy to ensure proper serialization
-                const mappingCount = Object.keys(
-                    syncState.eventMapping || {}
-                ).length;
-                console.log(`Saving sync state for ${cal.directory}:`, {
-                    lastSyncTime: syncState.lastSyncTime,
-                    mappingCount: mappingCount,
-                });
                 this.plugin.settings.googleSyncStates[cal.directory] = {
                     lastSyncTime: syncState.lastSyncTime,
                     eventMapping: { ...syncState.eventMapping }, // Deep copy
@@ -207,7 +188,6 @@ export class SyncScheduler {
 
         // Save settings without resetting cache
         await this.plugin.saveData(this.plugin.settings);
-        console.log("Sync state saved to disk");
     }
 
     /**
