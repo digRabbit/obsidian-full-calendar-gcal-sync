@@ -27,6 +27,17 @@ export interface FullCalendarSettings {
     };
     timeFormat24h: boolean;
     clickToCreateEventFromMonthView: boolean;
+    googleOAuth?: {
+        clientId: string;
+        clientSecret: string;
+        redirectUri: string;
+    };
+    googleSyncStates?: {
+        [calendarId: string]: {
+            lastSyncTime: number;
+            eventMapping: { [obsidianEventId: string]: string };
+        };
+    };
 }
 
 export const DEFAULT_SETTINGS: FullCalendarSettings = {
@@ -39,6 +50,12 @@ export const DEFAULT_SETTINGS: FullCalendarSettings = {
     },
     timeFormat24h: false,
     clickToCreateEventFromMonthView: true,
+    googleOAuth: {
+        clientId: "",
+        clientSecret: "",
+        redirectUri: "obsidian://google-calendar-callback",
+    },
+    googleSyncStates: {},
 };
 
 const WEEKDAYS = [
