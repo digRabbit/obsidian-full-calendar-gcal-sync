@@ -36,6 +36,7 @@ export interface FullCalendarSettings {
         [calendarId: string]: {
             lastSyncTime: number;
             eventMapping: { [obsidianEventId: string]: string };
+            pendingDeletions?: string[];
         };
     };
 }

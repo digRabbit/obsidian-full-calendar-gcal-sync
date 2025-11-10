@@ -82,7 +82,12 @@ export default class FullCalendarPlugin extends Plugin {
             // Load sync state if it exists
             const syncState = this.settings.googleSyncStates?.[info.directory];
             if (syncState) {
-                calendar.loadSyncState(syncState);
+                // Ensure pendingDeletions exists for backward compatibility
+                const stateWithPending = {
+                    ...syncState,
+                    pendingDeletions: syncState.pendingDeletions || [],
+                };
+                calendar.loadSyncState(stateWithPending);
             }
 
             // Register with sync scheduler

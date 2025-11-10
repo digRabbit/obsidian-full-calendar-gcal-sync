@@ -185,6 +185,9 @@ export class SyncScheduler {
                 this.plugin.settings.googleSyncStates[cal.directory] = {
                     lastSyncTime: syncState.lastSyncTime,
                     eventMapping: { ...syncState.eventMapping }, // Deep copy
+                    pendingDeletions: syncState.pendingDeletions
+                        ? [...syncState.pendingDeletions]
+                        : [],
                 };
             }
 

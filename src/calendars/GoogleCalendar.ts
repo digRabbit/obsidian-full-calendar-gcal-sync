@@ -341,6 +341,14 @@ export default class GoogleCalendar extends EditableCalendar {
         console.warn(
             "Could not delete event from Google Calendar. No mapping found and query failed."
         );
+
+        // Add to pending deletions so it can be synced later when online
+        if (this.syncService) {
+            // Try all possible keys as pending deletions
+            for (const key of uniqueKeys) {
+                this.syncService.addPendingDeletion(key);
+            }
+        }
     }
 
     async deleteEvent(location: EventPathLocation): Promise<void> {
@@ -373,7 +381,23 @@ export default class GoogleCalendar extends EditableCalendar {
                     filePath,
                     filePath.replace(/^.*\//, ""),
                 ];
-                await this.deleteByKeys(possibleKeys);
+                try {
+                    await this.deleteByKeys(possibleKeys);
+                } catch (error) {
+                    console.error(
+                        "Failed to delete event from Google Calendar:",
+                        error
+                    );
+                    // Add to pending deletions for later sync
+                    if (this.syncService) {
+                        for (const key of possibleKeys) {
+                            if (key) {
+                                this.syncService.addPendingDeletion(key);
+                            }
+                        }
+                    }
+                    // Don't throw - local deletion should still proceed
+                }
             } catch (error) {
                 console.error(
                     "Failed to delete event from Google Calendar:",
@@ -427,7 +451,8 @@ export default class GoogleCalendar extends EditableCalendar {
             event,
             filePath: location?.file?.path,
         }));
-        await this.syncService!.syncEventsWithPaths(eventsWithPaths);
+        // Don't show notice here - let the caller (SyncScheduler or manual sync) handle it
+        await this.syncService!.syncEventsWithPaths(eventsWithPaths, false);
     }
 
     /**

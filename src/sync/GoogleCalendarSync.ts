@@ -23,6 +23,7 @@ export interface SyncState {
     eventMapping: {
         [obsidianEventId: string]: string; // Maps Obsidian event ID to Google Calendar event ID
     };
+    pendingDeletions: string[]; // Event keys that need to be deleted from Google Calendar
 }
 
 /**
@@ -59,7 +60,11 @@ export class GoogleCalendarSync {
             version: "v3",
             auth: this.oauth2Client,
         });
-        this.syncState = { lastSyncTime: 0, eventMapping: {} };
+        this.syncState = {
+            lastSyncTime: 0,
+            eventMapping: {},
+            pendingDeletions: [],
+        };
     }
 
     /**
@@ -244,6 +249,8 @@ export class GoogleCalendarSync {
         }
 
         try {
+            // Token refresh is handled at batch level, but check if needed here too
+            // (in case token expired during parallel processing)
             await this.refreshTokenIfNeeded();
 
             const googleEvent = this.convertToGoogleEvent(event);
@@ -532,6 +539,14 @@ export class GoogleCalendarSync {
                 return;
             }
 
+            // If not found in mapping, check if it's in pending deletions
+            if (this.syncState.pendingDeletions?.includes(obsidianEventId)) {
+                // Already in pending, will be processed during sync
+                return;
+            }
+
+            // Add to pending deletions for later sync
+            this.addPendingDeletion(obsidianEventId);
             throw new Error(
                 `No Google Calendar event found for: ${obsidianEventId}`
             );
@@ -546,19 +561,38 @@ export class GoogleCalendarSync {
             });
 
             delete this.syncState.eventMapping[obsidianEventId];
+            // Remove from pending deletions if it was there
+            if (this.syncState.pendingDeletions) {
+                const pendingIndex =
+                    this.syncState.pendingDeletions.indexOf(obsidianEventId);
+                if (pendingIndex > -1) {
+                    this.syncState.pendingDeletions.splice(pendingIndex, 1);
+                }
+            }
         } catch (error: any) {
             if (error.code === 404) {
-                // Event already deleted, just remove from mapping
+                // Event already deleted, just remove from mapping and pending
                 delete this.syncState.eventMapping[obsidianEventId];
+                if (this.syncState.pendingDeletions) {
+                    const pendingIndex =
+                        this.syncState.pendingDeletions.indexOf(
+                            obsidianEventId
+                        );
+                    if (pendingIndex > -1) {
+                        this.syncState.pendingDeletions.splice(pendingIndex, 1);
+                    }
+                }
             } else if (error.code === 401) {
                 throw new Error(
                     "Google Calendar authentication expired. Please re-authenticate."
                 );
             } else {
+                // Network error or other issue - add to pending deletions
                 console.error(
                     "Error deleting event from Google Calendar:",
                     error
                 );
+                this.addPendingDeletion(obsidianEventId);
                 throw error;
             }
         }
@@ -601,14 +635,114 @@ export class GoogleCalendarSync {
     }
 
     /**
+     * Process pending deletions from Google Calendar
+     */
+    private async processPendingDeletions(): Promise<{
+        deleted: number;
+        failed: number;
+    }> {
+        const results = {
+            deleted: 0,
+            failed: 0,
+        };
+
+        if (
+            !this.syncState.pendingDeletions ||
+            this.syncState.pendingDeletions.length === 0
+        ) {
+            return results;
+        }
+
+        console.log(
+            `Processing ${this.syncState.pendingDeletions.length} pending deletions...`
+        );
+
+        // Process deletions in batches
+        const BATCH_SIZE = 10;
+        const deletionsToProcess = [...this.syncState.pendingDeletions];
+        const remainingDeletions: string[] = [];
+
+        for (let i = 0; i < deletionsToProcess.length; i += BATCH_SIZE) {
+            const batch = deletionsToProcess.slice(i, i + BATCH_SIZE);
+
+            const batchResults = await Promise.allSettled(
+                batch.map((eventKey) => this.deleteEvent(eventKey))
+            );
+
+            for (let j = 0; j < batchResults.length; j++) {
+                const result = batchResults[j];
+                const eventKey = batch[j];
+
+                if (result.status === "fulfilled") {
+                    results.deleted++;
+                    // Remove from mapping if it exists
+                    if (this.syncState.eventMapping[eventKey]) {
+                        delete this.syncState.eventMapping[eventKey];
+                    }
+                } else {
+                    console.warn(
+                        `Failed to delete pending event ${eventKey}:`,
+                        result.reason
+                    );
+                    results.failed++;
+                    // Keep in pending list to retry later
+                    remainingDeletions.push(eventKey);
+                }
+            }
+
+            // Small delay between batches
+            if (i + BATCH_SIZE < deletionsToProcess.length) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+        }
+
+        // Update pending deletions list (keep only failed ones)
+        this.syncState.pendingDeletions = remainingDeletions;
+
+        if (results.deleted > 0) {
+            console.log(
+                `Processed ${results.deleted} pending deletions, ${results.failed} failed`
+            );
+        }
+
+        return results;
+    }
+
+    /**
+     * Add an event key to pending deletions (for offline deletion tracking)
+     */
+    addPendingDeletion(eventKey: string): void {
+        if (!this.syncState.pendingDeletions) {
+            this.syncState.pendingDeletions = [];
+        }
+        if (!this.syncState.pendingDeletions.includes(eventKey)) {
+            this.syncState.pendingDeletions.push(eventKey);
+            console.log(`Added to pending deletions: ${eventKey}`);
+        }
+    }
+
+    /**
      * Sync multiple events with file paths for stable identification
+     * Processes events in parallel batches for better performance
+     * @param showNotice Whether to show a notice when sync completes (default: false)
      */
     async syncEventsWithPaths(
-        eventsWithPaths: Array<{ event: OFCEvent; filePath?: string }>
-    ): Promise<void> {
+        eventsWithPaths: Array<{ event: OFCEvent; filePath?: string }>,
+        showNotice: boolean = false
+    ): Promise<{
+        synced: number;
+        skipped: number;
+        failed: number;
+    }> {
         if (!this.isAuthenticated()) {
             throw new Error("Not authenticated with Google Calendar");
         }
+
+        // Refresh token once before parallel processing
+        await this.refreshTokenIfNeeded();
+
+        // Process pending deletions first
+        const deletionResults = await this.processPendingDeletions();
 
         const results = {
             synced: 0,
@@ -616,26 +750,56 @@ export class GoogleCalendarSync {
             failed: 0,
         };
 
-        for (const { event, filePath } of eventsWithPaths) {
-            try {
-                const googleId = await this.syncEvent(event, filePath);
-                if (googleId) {
-                    results.synced++;
+        // Process events in parallel batches to respect API rate limits
+        // Google Calendar API allows ~100 requests per 100 seconds per user
+        // We'll use batches of 10 concurrent requests with a small delay between batches
+        const BATCH_SIZE = 10;
+        const BATCH_DELAY_MS = 100; // Small delay between batches
+
+        for (let i = 0; i < eventsWithPaths.length; i += BATCH_SIZE) {
+            const batch = eventsWithPaths.slice(i, i + BATCH_SIZE);
+
+            // Process batch in parallel
+            const batchResults = await Promise.allSettled(
+                batch.map(({ event, filePath }) =>
+                    this.syncEvent(event, filePath)
+                )
+            );
+
+            // Count results
+            for (const result of batchResults) {
+                if (result.status === "fulfilled") {
+                    if (result.value) {
+                        results.synced++;
+                    } else {
+                        results.skipped++;
+                    }
                 } else {
-                    results.skipped++;
+                    console.error("Failed to sync event:", result.reason);
+                    results.failed++;
                 }
-            } catch (error) {
-                console.error("Failed to sync event:", event.title, error);
-                results.failed++;
+            }
+
+            // Small delay between batches to avoid hitting rate limits
+            if (i + BATCH_SIZE < eventsWithPaths.length) {
+                await new Promise((resolve) =>
+                    setTimeout(resolve, BATCH_DELAY_MS)
+                );
             }
         }
 
         this.syncState.lastSyncTime = Date.now();
 
         console.log("Sync complete:", results);
-        new Notice(
-            `Google Calendar sync: ${results.synced} synced, ${results.skipped} skipped, ${results.failed} failed`
-        );
+
+        // Only show notice if explicitly requested (for periodic sync)
+        if (showNotice) {
+            new Notice(
+                `Google Calendar sync: ${results.synced} synced, ${results.skipped} skipped, ${results.failed} failed`
+            );
+        }
+
+        return results;
     }
 
     /**
@@ -659,6 +823,9 @@ export class GoogleCalendarSync {
         this.syncState = {
             lastSyncTime: state.lastSyncTime || 0,
             eventMapping: { ...mapping }, // Create a new object to avoid reference issues
+            pendingDeletions: state.pendingDeletions
+                ? [...state.pendingDeletions]
+                : [],
         };
         console.log(
             "Sync state loaded. Current mapping count:",
