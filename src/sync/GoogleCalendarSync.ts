@@ -410,17 +410,59 @@ export class GoogleCalendarSync {
     }
 
     /**
-     * Delete an event from Google Calendar
+     * Find an event in Google Calendar by title and date
+     * Returns the Google Calendar event ID if found
      */
-    async deleteEvent(obsidianEventId: string): Promise<void> {
+    async findEventByTitleAndDate(
+        title: string,
+        dateStr: string
+    ): Promise<string | null> {
         if (!this.isAuthenticated()) {
-            throw new Error("Not authenticated with Google Calendar");
+            return null;
         }
 
-        const googleEventId = this.syncState.eventMapping[obsidianEventId];
-        if (!googleEventId) {
-            console.log("No Google Calendar event found for:", obsidianEventId);
-            return;
+        try {
+            await this.refreshTokenIfNeeded();
+
+            // Parse the date string (YYYY-MM-DD)
+            const date = new Date(dateStr + "T00:00:00Z");
+            const startOfDay = new Date(date);
+            startOfDay.setUTCHours(0, 0, 0, 0);
+            const endOfDay = new Date(date);
+            endOfDay.setUTCHours(23, 59, 59, 999);
+
+            const response = await this.calendar.events.list({
+                calendarId: this.calendarId,
+                timeMin: startOfDay.toISOString(),
+                timeMax: endOfDay.toISOString(),
+                q: title, // Search by title
+                maxResults: 10,
+                singleEvents: true,
+                orderBy: "startTime",
+            });
+
+            const events = response.data.items || [];
+            // Find exact or close match
+            const match = events.find(
+                (item: any) =>
+                    item.summary === title ||
+                    item.summary?.includes(title) ||
+                    title.includes(item.summary || "")
+            );
+
+            return match?.id || null;
+        } catch (error: any) {
+            console.error("Error finding event in Google Calendar:", error);
+            return null;
+        }
+    }
+
+    /**
+     * Delete an event from Google Calendar by its Google Calendar ID
+     */
+    async deleteEventByGoogleId(googleEventId: string): Promise<void> {
+        if (!this.isAuthenticated()) {
+            throw new Error("Not authenticated with Google Calendar");
         }
 
         try {
@@ -431,10 +473,80 @@ export class GoogleCalendarSync {
                 eventId: googleEventId,
             });
 
-            console.log("Deleted event from Google Calendar:", googleEventId);
-            delete this.syncState.eventMapping[obsidianEventId];
+            // Remove from mapping if it exists
+            const mappingKey = Object.keys(this.syncState.eventMapping).find(
+                (key) => this.syncState.eventMapping[key] === googleEventId
+            );
+            if (mappingKey) {
+                delete this.syncState.eventMapping[mappingKey];
+            }
         } catch (error: any) {
             console.error("Error deleting event from Google Calendar:", error);
+            if (error.code === 404) {
+                // Event already deleted, just remove from mapping if it exists
+                const mappingKey = Object.keys(
+                    this.syncState.eventMapping
+                ).find(
+                    (key) => this.syncState.eventMapping[key] === googleEventId
+                );
+                if (mappingKey) {
+                    delete this.syncState.eventMapping[mappingKey];
+                }
+            } else if (error.code === 401) {
+                throw new Error(
+                    "Google Calendar authentication expired. Please re-authenticate."
+                );
+            } else {
+                throw error;
+            }
+        }
+    }
+
+    /**
+     * Delete an event from Google Calendar
+     */
+    async deleteEvent(obsidianEventId: string): Promise<void> {
+        if (!this.isAuthenticated()) {
+            throw new Error("Not authenticated with Google Calendar");
+        }
+
+        const googleEventId = this.syncState.eventMapping[obsidianEventId];
+        if (!googleEventId) {
+            // Try to find a matching key (case-insensitive or partial match)
+            const matchingKey = Object.keys(this.syncState.eventMapping).find(
+                (key) =>
+                    key === obsidianEventId ||
+                    key.toLowerCase() === obsidianEventId.toLowerCase() ||
+                    key.endsWith(obsidianEventId) ||
+                    obsidianEventId.endsWith(key)
+            );
+
+            if (matchingKey) {
+                const matchedGoogleId =
+                    this.syncState.eventMapping[matchingKey];
+                await this.calendar.events.delete({
+                    calendarId: this.calendarId,
+                    eventId: matchedGoogleId,
+                });
+                delete this.syncState.eventMapping[matchingKey];
+                return;
+            }
+
+            throw new Error(
+                `No Google Calendar event found for: ${obsidianEventId}`
+            );
+        }
+
+        try {
+            await this.refreshTokenIfNeeded();
+
+            await this.calendar.events.delete({
+                calendarId: this.calendarId,
+                eventId: googleEventId,
+            });
+
+            delete this.syncState.eventMapping[obsidianEventId];
+        } catch (error: any) {
             if (error.code === 404) {
                 // Event already deleted, just remove from mapping
                 delete this.syncState.eventMapping[obsidianEventId];
@@ -443,6 +555,10 @@ export class GoogleCalendarSync {
                     "Google Calendar authentication expired. Please re-authenticate."
                 );
             } else {
+                console.error(
+                    "Error deleting event from Google Calendar:",
+                    error
+                );
                 throw error;
             }
         }

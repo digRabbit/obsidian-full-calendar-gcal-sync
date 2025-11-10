@@ -141,19 +141,19 @@ export default class FullCalendarPlugin extends Plugin {
         );
 
         this.registerEvent(
-            this.app.vault.on("rename", (file, oldPath) => {
+            this.app.vault.on("rename", async (file, oldPath) => {
                 if (file instanceof TFile) {
                     console.debug("FILE RENAMED", file.path);
-                    this.cache.deleteEventsAtPath(oldPath);
+                    await this.cache.deleteEventsAtPath(oldPath);
                 }
             })
         );
 
         this.registerEvent(
-            this.app.vault.on("delete", (file) => {
+            this.app.vault.on("delete", async (file) => {
                 if (file instanceof TFile) {
                     console.debug("FILE DELETED", file.path);
-                    this.cache.deleteEventsAtPath(file.path);
+                    await this.cache.deleteEventsAtPath(file.path);
                 }
             })
         );
@@ -207,6 +207,27 @@ export default class FullCalendarPlugin extends Plugin {
             name: "Revalidate remote calendars",
             callback: () => {
                 this.cache.revalidateRemoteCalendars(true);
+            },
+        });
+
+        this.addCommand({
+            id: "full-calendar-sync-google",
+            name: "Sync Google Calendar",
+            callback: async () => {
+                if (!this.syncScheduler) {
+                    new Notice("Sync scheduler not available.");
+                    return;
+                }
+                try {
+                    new Notice("Syncing Google Calendar...");
+                    await this.syncScheduler.syncAll();
+                    new Notice("Google Calendar sync completed!");
+                } catch (error: any) {
+                    console.error("Sync failed:", error);
+                    new Notice(
+                        `Sync failed: ${error?.message || "Unknown error"}`
+                    );
+                }
             },
         });
 

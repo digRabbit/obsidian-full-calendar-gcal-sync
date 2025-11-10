@@ -87,6 +87,28 @@ export class SyncScheduler {
     }
 
     /**
+     * Manually trigger sync for a specific calendar by directory
+     */
+    async syncCalendarByDirectory(directory: string): Promise<void> {
+        const calendar = this.googleCalendars.find(
+            (cal) => cal.directory === directory && cal.isSyncReady()
+        );
+
+        if (!calendar) {
+            throw new Error(
+                `Calendar with directory "${directory}" not found or not ready for sync`
+            );
+        }
+
+        await calendar.syncAllEvents();
+
+        // Save sync state after syncing
+        if (this.plugin) {
+            await this.saveSyncState();
+        }
+    }
+
+    /**
      * Manually trigger sync for all registered calendars
      */
     async syncAll(): Promise<void> {

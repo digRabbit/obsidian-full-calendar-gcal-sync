@@ -250,28 +250,141 @@ export default class GoogleCalendar extends EditableCalendar {
         return location;
     }
 
-    async deleteEvent(location: EventPathLocation): Promise<void> {
-        // Get the event before deletion to find its ID for Google Calendar sync
-        let eventId: string | undefined;
-        if (this.isSyncReady()) {
-            try {
-                // Try to get the event to find its ID
-                // We'll need to read the file to get the event data
-                // For now, we'll rely on the sync state mapping
-                // The EventStore should handle this mapping
-            } catch (error) {
-                console.error(
-                    "Could not retrieve event ID for Google Calendar deletion:",
-                    error
-                );
+    /**
+     * Best-effort remote deletion using multiple possible mapping keys
+     * Keys may be: explicit event.id, full file path, or filename
+     */
+    async deleteByKeys(possibleKeys: string[]): Promise<void> {
+        if (!this.isSyncReady() || !this.syncService) {
+            return;
+        }
+        const uniqueKeys = Array.from(
+            new Set(
+                possibleKeys.filter((k): k is string => !!k && k.length > 0)
+            )
+        );
+        const state = this.syncService.getSyncState();
+        const allMappingKeys = Object.keys(state.eventMapping);
+
+        // Try exact match first
+        for (const key of uniqueKeys) {
+            const mapped = state.eventMapping[key];
+            if (mapped) {
+                try {
+                    await this.syncService.deleteEvent(key);
+                    return;
+                } catch (err) {
+                    console.warn("Failed to delete event by key:", key, err);
+                }
             }
         }
 
-        // Delete locally first
-        await this.localCalendar.deleteEvent(location);
+        // Try fuzzy match (case-insensitive, partial match)
+        for (const key of uniqueKeys) {
+            const match = Object.keys(state.eventMapping).find(
+                (k) =>
+                    k === key ||
+                    k.toLowerCase() === key.toLowerCase() ||
+                    k.endsWith(key) ||
+                    key.endsWith(k) ||
+                    k.includes(key) ||
+                    key.includes(k)
+            );
+            if (match) {
+                try {
+                    await this.syncService.deleteEvent(match);
+                    return;
+                } catch (err) {
+                    console.warn(
+                        "Failed to delete event by fuzzy match:",
+                        match,
+                        err
+                    );
+                }
+            }
+        }
 
-        // Note: For proper deletion tracking, events should have IDs
-        // The sync state mapping will help track deletions
+        // Last resort: query Google Calendar directly by filename
+        // Extract date and title from filename (format: YYYY-MM-DD Title.md)
+        if (uniqueKeys.length > 0) {
+            const filename =
+                uniqueKeys
+                    .find((k) => k.includes("/"))
+                    ?.split("/")
+                    .pop() || uniqueKeys[0];
+            const dateMatch = filename.match(
+                /^(\d{4}-\d{2}-\d{2})\s+(.+?)\.md$/
+            );
+            if (dateMatch) {
+                const [, dateStr, title] = dateMatch;
+                try {
+                    const foundEventId =
+                        await this.syncService?.findEventByTitleAndDate(
+                            title,
+                            dateStr
+                        );
+                    if (foundEventId) {
+                        await this.syncService?.deleteEventByGoogleId(
+                            foundEventId
+                        );
+                        return;
+                    }
+                } catch (err) {
+                    console.warn(
+                        "Failed to query Google Calendar for event:",
+                        err
+                    );
+                }
+            }
+        }
+
+        console.warn(
+            "Could not delete event from Google Calendar. No mapping found and query failed."
+        );
+    }
+
+    async deleteEvent(location: EventPathLocation): Promise<void> {
+        // Sync deletion to Google Calendar if enabled
+        if (this.isSyncReady()) {
+            try {
+                const filePath = location.path;
+                console.log("Attempting to delete event at path:", filePath);
+
+                // Try to get the event from the file to check if it has an ID
+                // But the file might already be deleted, so we need to try multiple keys
+                let eventKey: string | undefined = filePath;
+                const file = this.localCalendar.app.getFileByPath(filePath);
+
+                if (file) {
+                    try {
+                        const events = await this.getEventsInFile(file);
+                        if (events.length > 0) {
+                            const [event] = events[0];
+                            // Use event.id if available, otherwise use file path
+                            eventKey = event.id || filePath;
+                        }
+                    } catch (error) {
+                        // File might already be deleted, continue with file path
+                    }
+                }
+
+                const possibleKeys = [
+                    eventKey,
+                    filePath,
+                    filePath.replace(/^.*\//, ""),
+                ];
+                await this.deleteByKeys(possibleKeys);
+            } catch (error) {
+                console.error(
+                    "Failed to delete event from Google Calendar:",
+                    error
+                );
+                // Don't throw - local deletion should still proceed
+            }
+        }
+
+        // Delete locally
+        await this.localCalendar.deleteEvent(location);
     }
 
     async modifyEvent(

@@ -262,25 +262,18 @@ function ManualSyncButton({ source, plugin }: ManualSyncButtonProps) {
 
         setIsSyncing(true);
         try {
-            // Get the calendar instance from the cache
-            const calendar = plugin.cache.getCalendarById(source.directory);
-            if (!calendar) {
-                new Notice("Calendar not found. Please reload Obsidian.");
+            // Use sync scheduler to sync the specific calendar by directory
+            if (!plugin.syncScheduler) {
+                new Notice(
+                    "Sync scheduler not available. Please reload Obsidian."
+                );
                 return;
             }
 
-            // Import GoogleCalendar to check type
-            const GoogleCalendar = (
-                await import("../../calendars/GoogleCalendar")
-            ).default;
-
-            if (calendar instanceof GoogleCalendar) {
-                await calendar.syncAllEvents();
-                // Sync state is saved automatically by the scheduler after sync
-                new Notice("Sync completed successfully!");
-            } else {
-                new Notice("Calendar is not a Google Calendar.");
-            }
+            await plugin.syncScheduler.syncCalendarByDirectory(
+                source.directory
+            );
+            new Notice("Sync completed successfully!");
         } catch (error: any) {
             console.error("Manual sync failed:", error);
             new Notice(`Sync failed: ${error?.message || "Unknown error"}`);
