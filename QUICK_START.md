@@ -6,18 +6,19 @@
 
 ```bash
 # From the project directory, copy files to your vault
-cd /home/qotto/Work/obsidian-full-calendar-gcal-sync
+# Replace [YOUR_VAULT_PATH] with the path to your Obsidian vault
 
 # Copy the built plugin
 cp main.js main.css manifest.json \
-   "/home/qotto/Documents/Obsidian Vault/.obsidian/plugins/obsidian-full-calendar/"
+   "[YOUR_VAULT_PATH]/.obsidian/plugins/obsidian-full-calendar/"
 
 # Reload Obsidian
 ```
 
 Or install manually:
 1. Copy `main.js`, `main.css`, and `manifest.json`
-2. Paste into: `/home/qotto/Documents/Obsidian Vault/.obsidian/plugins/obsidian-full-calendar/`
+2. Paste into: `[YOUR_VAULT_PATH]/.obsidian/plugins/obsidian-full-calendar/`
+   (Replace `[YOUR_VAULT_PATH]` with your actual vault path)
 3. Reload Obsidian (Ctrl+R or restart)
 
 ### 2. Get Google OAuth Credentials (10 minutes)

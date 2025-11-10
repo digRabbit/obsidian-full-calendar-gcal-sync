@@ -106,6 +106,7 @@ export function addCalendarButton(
                     icloud: "iCloud",
                     caldav: "CalDAV",
                     ical: "Remote (.ics format)",
+                    google: "Google Calendar",
                 }))
         )
         .addExtraButton((button) => {
@@ -121,7 +122,9 @@ export function addCalendarButton(
                                   plugin.settings.calendarSources
                                       .map(
                                           (s) =>
-                                              s.type === "local" && s.directory
+                                              (s.type === "local" ||
+                                                  s.type === "google") &&
+                                              s.directory
                                       )
                                       .filter((s): s is string => !!s)
                     )();
@@ -263,6 +266,74 @@ export class FullCalendarSettingTab extends PluginSettingTab {
                 });
             });
 
+        containerEl.createEl("h2", { text: "Google Calendar OAuth" });
+        new Setting(containerEl)
+            .setName("Client ID")
+            .setDesc("Google OAuth Client ID from Google Cloud Console")
+            .addText((text) => {
+                text.setPlaceholder("Enter your Client ID")
+                    .setValue(this.plugin.settings.googleOAuth?.clientId || "")
+                    .onChange(async (value) => {
+                        if (!this.plugin.settings.googleOAuth) {
+                            this.plugin.settings.googleOAuth = {
+                                clientId: "",
+                                clientSecret: "",
+                                redirectUri:
+                                    "obsidian://google-calendar-callback",
+                            };
+                        }
+                        this.plugin.settings.googleOAuth.clientId = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName("Client Secret")
+            .setDesc("Google OAuth Client Secret from Google Cloud Console")
+            .addText((text) => {
+                text
+                    .setPlaceholder("Enter your Client Secret")
+                    .setValue(
+                        this.plugin.settings.googleOAuth?.clientSecret || ""
+                    ).inputEl.type = "password";
+                text.onChange(async (value) => {
+                    if (!this.plugin.settings.googleOAuth) {
+                        this.plugin.settings.googleOAuth = {
+                            clientId: "",
+                            clientSecret: "",
+                            redirectUri: "obsidian://google-calendar-callback",
+                        };
+                    }
+                    this.plugin.settings.googleOAuth.clientSecret = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        new Setting(containerEl)
+            .setName("Redirect URI")
+            .setDesc(
+                "OAuth redirect URI (should match Google Cloud Console configuration)"
+            )
+            .addText((text) => {
+                text.setPlaceholder("obsidian://google-calendar-callback")
+                    .setValue(
+                        this.plugin.settings.googleOAuth?.redirectUri ||
+                            "obsidian://google-calendar-callback"
+                    )
+                    .onChange(async (value) => {
+                        if (!this.plugin.settings.googleOAuth) {
+                            this.plugin.settings.googleOAuth = {
+                                clientId: "",
+                                clientSecret: "",
+                                redirectUri:
+                                    "obsidian://google-calendar-callback",
+                            };
+                        }
+                        this.plugin.settings.googleOAuth.redirectUri = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
         containerEl.createEl("h2", { text: "Manage Calendars" });
         addCalendarButton(
             this.app,
@@ -273,7 +344,11 @@ export class FullCalendarSettingTab extends PluginSettingTab {
             },
             () =>
                 sourceList.state.sources
-                    .map((s) => s.type === "local" && s.directory)
+                    .map(
+                        (s) =>
+                            (s.type === "local" || s.type === "google") &&
+                            s.directory
+                    )
                     .filter((s): s is string => !!s)
         );
 
@@ -282,6 +357,7 @@ export class FullCalendarSettingTab extends PluginSettingTab {
         let sourceList = ReactDOM.render(
             createElement(CalendarSettings, {
                 sources: this.plugin.settings.calendarSources,
+                plugin: this.plugin,
                 submit: async (settings: CalendarInfo[]) => {
                     this.plugin.settings.calendarSources = settings;
                     await this.plugin.saveSettings();

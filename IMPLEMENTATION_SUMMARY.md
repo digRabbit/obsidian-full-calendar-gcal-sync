@@ -52,14 +52,14 @@ The plugin has been built and is ready to install!
 
 ```bash
 # Copy the built plugin to your Obsidian vault
-cp -r /home/qotto/Work/obsidian-full-calendar-gcal-sync/main.js \
-      /home/qotto/Work/obsidian-full-calendar-gcal-sync/main.css \
-      /home/qotto/Work/obsidian-full-calendar-gcal-sync/manifest.json \
-      "/home/qotto/Documents/Obsidian Vault/.obsidian/plugins/obsidian-full-calendar/"
+# Replace [YOUR_VAULT_PATH] with the path to your Obsidian vault
+cp -r main.js main.css manifest.json \
+   "[YOUR_VAULT_PATH]/.obsidian/plugins/obsidian-full-calendar/"
 ```
 
 Or manually:
-1. Navigate to: `/home/qotto/Documents/Obsidian Vault/.obsidian/plugins/obsidian-full-calendar/`
+1. Navigate to: `[YOUR_VAULT_PATH]/.obsidian/plugins/obsidian-full-calendar/`
+   (Replace `[YOUR_VAULT_PATH]` with your actual vault path)
 2. Replace `main.js`, `main.css`, and `manifest.json` with the newly built versions
 
 ### Step 2: Set Up Google OAuth Credentials
@@ -210,9 +210,10 @@ To test the plugin:
 
 1. Create a test event in Obsidian:
    ```bash
-   cd "/home/qotto/Documents/Obsidian Vault/CalendarData"
+   cd "[YOUR_VAULT_PATH]/CalendarData"
    # Create a new event file
    ```
+   (Replace `[YOUR_VAULT_PATH]` with your actual vault path)
 
 2. Wait for sync (or trigger manual sync if implemented)
 
